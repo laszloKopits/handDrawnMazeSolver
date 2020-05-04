@@ -1,55 +1,68 @@
 import numpy as np
 import cv2
 import math
+import statistics as st
 
-SURROUNDINGS_DISTANCE = 5
-DIFFERENCE_THRESHOLD = 20
-COLOR_DIFFERENCE_THRESHOLD = 20
+ROW_CHUNK_AMOUNT = 16
+COL_CHUNK_AMOUNT = 14
+RED_THRESH = 30
+BLUE_THRESH = 30
+BLACK_THRESH = 120
 
-def absoluteBrightness(color):
-    return int(math.sqrt(color[0]**2 + color[1]**2 + color[2]**2))
+def chunkMedian(values, startRow, startCol, chunkHeight, chunkWidth):
+    chunkValues = []
+    for row in range(startRow, startRow + chunkHeight):
+        for col in range(startCol, startCol + chunkWidth):
+            chunkValues.append(values[row][col])
+    blueValues = [float(val[0]) for val in chunkValues]
+    greenValues = [float(val[1]) for val in chunkValues]
+    redValues = [float(val[2]) for val in chunkValues]
+    return [int(st.median(blueValues)), int(st.median(greenValues)), int(st.median(redValues))], \
+        [int(st.pstdev(blueValues)), int(st.pstdev(greenValues)), int(st.pstdev(redValues))]
 
-def surroundingsAverage(brightnesses, row, col, surr_dist = SURROUNDINGS_DISTANCE):
-    neighborBrightnesses = []
-    for row in range(row - surr_dist, row + surr_dist + 1):
-        for col in range(col - surr_dist, col + surr_dist + 1):
-            try:
-                neighborBrightnesses.append(brightnesses[row][col])
-            except IndexError:
-                pass
-    return sum(neighborBrightnesses)/len(neighborBrightnesses)
+def brightnessProcessFunc(pixel):
+    return int(pixel[0]) + int(pixel[1]) + int(pixel[2])
 
+def corrChunkMedian(frame, chunkMedians, row, col, processFunction):
+    # Calculate the chunk corresponding to the given pixel
+    chunkRow = row * ROW_CHUNK_AMOUNT // len(frame)
+    chunkCol = col * COL_CHUNK_AMOUNT // len(frame[0])
+    # Return the average of the found chunk (or the furthest one in case of overflow)
+    median, dev = chunkMedians[min(chunkRow, len(chunkMedians))][min(chunkCol, len(chunkMedians[0]))]
+    return processFunction(median), processFunction(dev)
 
 
 
 # Create maze array in format wall = 0, free = 1, start = 2, end = 3
 def createMaze(frame):
-    brightnesses = []
-    for row in range(len(frame)):
-        brightnesses.append([])
-        for col in range(len(frame[row])):
-            brightnesses[row].append(absoluteBrightness(frame[row][col]))
+    # Construct the chunk matrix with the average values for each chunk
+    chunkHeight = len(frame)//ROW_CHUNK_AMOUNT
+    chunkWidth = len(frame[0])//COL_CHUNK_AMOUNT
+    chunkValMeds = []
+    for chunkY in range(ROW_CHUNK_AMOUNT):
+        chunkValMeds.append([])
+        for chunkX in range(COL_CHUNK_AMOUNT):
+            chunkMed = chunkMedian(frame, chunkY*chunkHeight, chunkX*chunkWidth, chunkHeight, chunkWidth)
+            chunkValMeds[chunkY].append(chunkMed)
+
 
     maze = []
     for row in range(len(frame)):
         maze.append([])
         for col in range(len(frame[row])):
-            pixelBrightness = absoluteBrightness(frame[row][col])
-            #Case for a red, starting area
-            if frame[row][col][2] > frame[row][col][0] + COLOR_DIFFERENCE_THRESHOLD and frame[row][col][2] > frame[row][col][1] + COLOR_DIFFERENCE_THRESHOLD:
-                maze[row].append(2)
+            brightMed, brightDev = corrChunkMedian(frame, chunkValMeds, row, col, brightnessProcessFunc)
+
+            if frame[row][col][2] >  frame[row][col][0] + RED_THRESH and frame[row][col][2] >  frame[row][col][1] + RED_THRESH:
+                #Case for a red, starting area
                 frame[row][col] = [0,0,255]
-            #Case for a blue, ending area
-            elif frame[row][col][0] > frame[row][col][1] + COLOR_DIFFERENCE_THRESHOLD and frame[row][col][0] > frame[row][col][2] + COLOR_DIFFERENCE_THRESHOLD:
+            elif frame[row][col][0] >  frame[row][col][1] + BLUE_THRESH and frame[row][col][0] >  frame[row][col][2] + BLUE_THRESH:
+                #Case for a blue, ending area
                 frame[row][col] = [255, 0, 0]
-                maze[row].append(3)
-            #Threshold for black pixel being a wall
-            elif pixelBrightness < surroundingsAverage(brightnesses, row, col) - DIFFERENCE_THRESHOLD:
-                maze[row].append(0)
+            elif brightnessProcessFunc(frame[row][col]) < brightMed - BLACK_THRESH:
+                #Threshold for black pixel being a wall
                 frame[row][col] = [0,0,0]
-            #Turn pixel to white otherwise
             else:
-                maze[row].append(1)
+                #Turn pixel to white otherwise
                 frame[row][col] = [255, 255, 255]
 
     cv2.imshow('result', frame)

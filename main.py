@@ -3,8 +3,6 @@ import numpy as np
 import mazeSolve
 import sys
 
-print(sys.argv)
-
 if len(sys.argv) > 1:
     mazeSolve.solve(cv2.imread(sys.argv[1]))
 else:
