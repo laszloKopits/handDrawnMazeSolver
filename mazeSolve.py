@@ -2,11 +2,12 @@ import numpy as np
 import cv2
 import math
 import statistics as st
+from mazeSquare import MazeSquare
 
 ROW_CHUNK_AMOUNT = 16
 COL_CHUNK_AMOUNT = 14
 RED_THRESH = 30
-BLUE_THRESH = 30
+BLUE_THRESH = 20
 BLACK_THRESH = 120
 
 def chunkMedian(values, startRow, startCol, chunkHeight, chunkWidth):
@@ -31,7 +32,32 @@ def corrChunkMedian(frame, chunkMedians, row, col, processFunction):
     median, dev = chunkMedians[min(chunkRow, len(chunkMedians))][min(chunkCol, len(chunkMedians[0]))]
     return processFunction(median), processFunction(dev)
 
+def checkFinished(currentSquares):
+    for square in currentSquares:
+        if square.type == "end":
+            return True
+    return False
 
+def solutionPath(currentSquares):
+    end = None
+    for square in currentSquares:
+        if square.type == "end":
+            end = square
+            break
+
+    path = []
+    currentSquare = end
+    while currentSquare.type != "start":
+        path.append(currentSquare)
+        currentSquare = currentSquare.parent
+
+    return path
+
+def solutionFrame(frame, path):
+    for square in path:
+        frame[square.row][square.col] = [203, 192, 255]
+
+    return frame
 
 # Create maze array in format wall = 0, free = 1, start = 2, end = 3
 def createMaze(frame):
@@ -55,20 +81,70 @@ def createMaze(frame):
             if frame[row][col][2] >  frame[row][col][0] + RED_THRESH and frame[row][col][2] >  frame[row][col][1] + RED_THRESH:
                 #Case for a red, starting area
                 frame[row][col] = [0,0,255]
+                maze[row].append(MazeSquare("start", row, col))
             elif frame[row][col][0] >  frame[row][col][1] + BLUE_THRESH and frame[row][col][0] >  frame[row][col][2] + BLUE_THRESH:
                 #Case for a blue, ending area
                 frame[row][col] = [255, 0, 0]
+                maze[row].append(MazeSquare("end", row, col))
             elif brightnessProcessFunc(frame[row][col]) < brightMed - BLACK_THRESH:
                 #Threshold for black pixel being a wall
                 frame[row][col] = [0,0,0]
+                maze[row].append(MazeSquare("wall", row, col))
             else:
                 #Turn pixel to white otherwise
                 frame[row][col] = [255, 255, 255]
+                maze[row].append(MazeSquare("free", row, col))
 
-    cv2.imshow('result', frame)
-    if cv2.waitKey(0) == ord('q'):
-        cv2.destroyWindow('result')
     return maze, frame
 
 def solve(frame):
-    createMaze(frame)
+    maze, procFrame = createMaze(frame)
+
+    currentExploringSquares = []
+
+    for row in range(len(maze)):
+        for col in range(len(maze[row])):
+            if maze[row][col].type == "start":
+                currentExploringSquares.append(maze[row][col])
+                maze[row][col].exploreState = "exploring"
+
+
+
+    nextSquares = []
+    while True:
+        cv2.imshow('maze', frame)
+        key = cv2.waitKey(1)
+        if key == ord('q'):
+            break
+
+
+        if checkFinished(currentExploringSquares):
+            path = solutionPath(currentExploringSquares)
+            while True:
+                cv2.imshow('maze', solutionFrame(frame, path))
+                key = cv2.waitKey(0)
+                if key == ord('q'):
+                    return path
+
+
+        # Find all the squares adjecent to an explored square
+        for square in currentExploringSquares:
+            frame[square.row][square.col] = [0, 255, 0]
+
+            neighbors = [
+                maze[square.row][square.col+1],
+                maze[square.row][square.col-1],
+                maze[square.row+1][square.col],
+                maze[square.row-1][square.col]
+            ]
+            for candidate in neighbors:
+                if candidate.explorable():
+                    candidate.exploreState = "exploring"
+                    candidate.parent = square
+                    nextSquares.append(candidate)
+
+            square.exploreState = "explored"
+
+        # Replace the old current squares with the new ones
+        currentExploringSquares = nextSquares
+        nextSquares = []
